@@ -143,7 +143,7 @@ void main() {
         #endif
 
         #if DEBUG_VIEW == 2
-            color.rgb = (texture2D(normals, texcoord).xyz *.5 + .5);
+            color.rgb = (texture2D(normals, texcoord).xyz);
         #endif
 
         #if DEBUG_VIEW == 3
