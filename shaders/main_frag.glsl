@@ -7,6 +7,7 @@ uniform sampler2D shadowtex0;
 uniform sampler2D shadowtex1;
 uniform sampler2D texture;
 uniform sampler2D normals;
+uniform sampler2D depthtex0;
 
 uniform float sunAngle;
 uniform vec3 shadowLightPosition;
@@ -31,7 +32,21 @@ uniform float fogEnd;
 uniform vec3 fogColor;
 uniform float far;
 
+uniform vec3 cameraPosition;
+
+uniform vec3 skyColor;
+
+uniform float ambientLight;
+
 varying vec2 jedlm;
+
+uniform mat4 gbufferModelViewInverse;
+uniform mat4 gbufferProjectionInverse;
+
+
+uniform float wetness;
+uniform float frameTimeCounter;
+
 
 //lighting
 varying vec4 tangent_face;
@@ -49,6 +64,79 @@ const float gamma = 0.5;
 //since that has to be declared in the fragment stage in order to do anything.
 #include "/distort.glsl"
 #include "/settings.glsl"
+
+float random3d(in vec3 p) 
+{
+	return fract(sin(p.x*456.+p.y*56.+p.z*741.)*100.);
+} 
+
+vec3 smooth_v3(in vec3 v)
+{
+	return v*v*(3.-2.*v);
+}
+
+float smooth_noise3d(in vec3 p) 
+{
+	vec3 f = smooth_v3(fract(p));
+
+	float a = random3d(floor(p));
+	float b = random3d(vec3(ceil(p.x),floor(p.y),floor(p.z)));
+	float c = random3d(vec3(floor(p.x), ceil(p.y),floor(p.z)));
+	float d = random3d(vec3(ceil(p.xy),floor(p.z)));
+
+	float bottom =  
+	mix(
+		mix(a, b, f.x),
+		mix(c, d, f.x),
+		f.y
+	);
+
+    a = random3d(vec3(floor(p.x),floor(p.y),ceil(p.z)));
+	b = random3d(vec3(ceil(p.x),floor(p.y),ceil(p.z)));
+	c = random3d(vec3(floor(p.x), ceil(p.y),ceil(p.z)));
+	d = random3d(vec3(ceil(p.xy), ceil(p.z)));
+
+    float top = 
+    mix(
+        mix(a,b,f.x),
+        mix(c,d,f.x),
+        f.y
+    );
+
+    return mix(bottom, top, f.z);
+
+}
+
+float fractal_noise3d(in vec3 p)
+{
+	float total = 0.25;
+	float amplitude = 1.;
+	float frequency = 1.;
+	float iterations = 4.;
+	for(float i = 0; i < iterations; i++)
+	{
+		total += (smooth_noise3d(p*frequency)-.5)*amplitude;
+		amplitude *= 0.5;
+		frequency *= 2.;
+	}
+	return total;
+}
+
+float get_cloud(in vec3 p)
+{
+	return clamp(
+		//noise for clouds
+		fractal_noise3d(p)
+		//Patches for clouds
+		*fractal_noise3d(p*0.1)*
+		(1.-(0.3*(1.-wetness)))*2.0
+	,0.,1.);
+}
+
+vec3 projectAndDivide(mat4 projectionMatrix, vec3 position) {
+	vec4 homogeneousPos = projectionMatrix * vec4(position, 1.0);
+	return homogeneousPos.xyz/homogeneousPos.w;
+}
 
 void main() {
 	vec4 color = texture2D(texture, texcoord) * glcolor;
@@ -92,23 +180,23 @@ void main() {
 
 	#if LIGHTING_STYLE == 1
 		//normalize(gl_NormalMatrix * glnormal);
-        vec3 bitangent = normalize(cross(tangent_face.rgb,normals_face.xyz)*tangent_face.w);
+        vec3 bitangent = cross(tangent_face.rgb,normals_face.xyz)*tangent_face.w;
         mat3 tbn_matrix = mat3(tangent_face.xyz, bitangent.xyz, normals_face.xyz);
 
         vec4 normals_texture = texture2D(normals, texcoord).rgba;
         normals_texture.xy = normals_texture.xy * 2. - 1.;
         normals_texture.z = sqrt(1.0-dot(normals_texture.xy, normals_texture.xy));
-        normals_texture.xyz = tbn_matrix * normals_texture.xyz;
+        normals_texture.xyz = normalize( tbn_matrix * normals_texture.xyz);
 
-		float lightDot = clamp(dot(normalize(shadowLightPosition), normals_texture.xyz),0.1,1.);
+		float lightDot = clamp(dot(normalize(shadowLightPosition), normals_texture.xyz),0.,1.);
         
 
 		vec4 jedlmap = texture2D(lightmap, jedlm);
 		
         
-
+		float lighting_coefficient = lightDot * jedlm.y + jedlmap.x * jedlm.x + ambientLight;
 		//Lighting
-		color.rgb *= (lightDot * jedlm.y + jedlmap.x * jedlm.x);
+		color.rgb *= (sunAngle<.5) ? vec3(1.0, 0.9, 0.8) * lighting_coefficient : vec3(.5,.5,.7) * lighting_coefficient;
 
 
 		// Fog

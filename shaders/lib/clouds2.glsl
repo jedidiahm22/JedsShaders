@@ -2,16 +2,33 @@
 
 
 uniform float frameTimeCounter;
+uniform int worldTime;
 uniform sampler2D colortex2;
+uniform sampler2D colortex1;
 uniform sampler2D depthtex0;
+
+
 
 uniform mat4 gbufferProjectionInverse;
 uniform mat4 gbufferModelViewInverse;
-uniform float rainStrength;
+
+uniform mat4 gbufferPreviousModelView;
+uniform mat4 gbufferPreviousProjection;
+//uniform float rainStrength;
+
+uniform float ambientLight;
+uniform float wetness;
+
+uniform vec3 shadowLightPosition;
+uniform vec3 skyColor;
+uniform float sunAngle;
 
 uniform vec3 cameraPosition;
 
 varying vec2 texcoord;
+
+const bool colortex1Clear = false;
+const bool colortex2MipMapEnabled = true;
 
 float random3d(in vec3 p) 
 {
@@ -57,7 +74,7 @@ float smooth_noise3d(in vec3 p)
 
 float fractal_noise3d(in vec3 p)
 {
-	float total = 0.5;
+	float total = 0.25;
 	float amplitude = 1.;
 	float frequency = 1.;
 	float iterations = 4.;
@@ -75,51 +92,117 @@ vec3 projectAndDivide(mat4 projectionMatrix, vec3 position) {
 	return homogeneousPos.xyz/homogeneousPos.w;
 }
 
+float patchmulti = 0.0115;
+
+float get_cloud(in vec3 p)
+{
+	return clamp(
+		//noise for clouds
+		fractal_noise3d(p)
+		//Patches for clouds
+		*fractal_noise3d(p*0.1)*
+		(1.-(0.3*(1.-wetness)))*2.0
+	,0.,1.);
+}
+
 void main() {
 	vec3 color = texture2D(colortex2, texcoord).rgb;
-	float depth = texture2D(depthtex0, texcoord).r;
+	vec3 sky_color = textureLod(colortex2, texcoord,6).rgb;
+
+	float depth = 1.;//texture2D(depthtex0, texcoord).r;
 	
-    vec3 sky_color = color;
+
+	float cloud_time = worldTime * .1;
+
+	vec4 pos = vec4(texcoord, depth, 1.)*2.0-1.0;
+	
+    
     
 
-    vec4 pos = vec4(texcoord, depth, 1.)*2.0-1.0;
+   
     pos.xyz = projectAndDivide(gbufferProjectionInverse, pos.xyz); //view Position
+	vec3 view_pos = vec3(pos.xyz);
+
 	pos = (gbufferModelViewInverse * vec4(pos.xyz, 1.)); // Feet Position
-	pos.xyz += cameraPosition; //World Position
+
+	
 	vec3 raydir = normalize(pos.xyz);
+
     float starting_distance = 1./raydir.y;
 
-	vec2 uv = raydir.xz * 1. * starting_distance + .1 * frameTimeCounter * CLOUD_SPEED;
-	vec2 uv2 = raydir.xz * 3. * starting_distance - .1 * frameTimeCounter*CLOUD_PERMUTATION_SPEED;
-
-    
+	vec2 uv = raydir.xz * starting_distance + .05 * cloud_time * CLOUD_SPEED + cameraPosition.xz*0.01;
 
     vec4 clouds = vec4(vec3(1.),0.);
 
     float scale = .1;
 
+	vec3 sundir = normalize(vec4(gbufferModelViewInverse * vec4(shadowLightPosition.xyz,1.)).xyz);
+
+	float sun_dot = clamp(dot(raydir, sundir),0.,1.);
+
+	float sunset_effect = pow(1.-sundir.y,10.);
+
+	vec3 sun_color = (sunAngle<.5? vec3(1.) : vec3(.5,.5,.7))
+	*(1.-vec3(1.,1.2,1.3)*sunset_effect);
+
+
     if(raydir.y > 0.)
 	{
         vec3 player = vec3(uv,0.);
-        vec3 player2 = vec3(uv2, 0.);
         
 
         float sky_density = .1;
 
 		for(float s = 0.; s < CLOUD_SAMPLES && clouds.a < 0.99; s++ ) 
         {
-            vec3 ray_pos = player + raydir * ((s-random3d(vec3((texcoord+.1*frameTimeCounter*CLOUD_SPEED),s*6)))) * scale;
-            vec3 ray_pos2 = player + raydir * (s-random3d(vec3(texcoord+.1*frameTimeCounter*CLOUD_PERMUTATION_SPEED,s*6))) * 3. * scale;   
-            vec4 cloud = vec4(fractal_noise3d(ray_pos)*fractal_noise3d(ray_pos2));
+            vec3 ray_pos = player + raydir * ((s-random3d(vec3((texcoord+.1*frameTimeCounter*CLOUD_SPEED),s*4)))) * scale;
+            
+			vec4 cloud = vec4(get_cloud(ray_pos));
+            
+			cloud.rgb = vec3(1.);
 
-            //making holes in the noise to emulate cloud clumps and increase density when raining
-	        clouds.a =clamp((clouds.a-0.3*(1.-rainStrength))*4.0,sky_density,2.);
-            cloud.rgb = mix(vec3(1.), sky_color, min(1.,s/CLOUD_SAMPLES+sky_density*(1.-clouds.a)));
+			//Shading
+			vec3 light = vec3(1.);
+			float cloud_top = player.y + CLOUD_SAMPLES + CLOUD_HEIGHT;
+			
+			vec3 ray_s_pos = ray_pos;
 
-            //blend it with existing
+
+			for(float ss = 0.; ss < CLOUD_SHADING_SAMPLES && ray_s_pos.y < cloud_top; ss++ ) 
+        	{
+				ray_s_pos = ray_pos + sundir * (ss-random3d(frameTimeCounter+vec3(texcoord,ss))) * scale;
+				
+				float cloud_shading = pow(get_cloud(ray_s_pos),1.);
+				light *= 1.-cloud_shading;
+			}
+
+			light += light.r * pow(sun_dot,1.+20.*(light.r));
+			light += light.g * pow(sun_dot,1.+10.*(light.g));
+
+
+			//sky ambient lighting			
+			vec3 sky_color_final = sky_color;
+
+			for(float ss = 0.; ss < 3.; ss++)
+			{
+				vec3 ray_s_pos = ray_pos + vec3(0.,1.,0.) * (ss-random3d(frameTimeCounter+vec3(texcoord,ss))) *scale;
+
+				float cloud_shading= pow(get_cloud(ray_s_pos),3.);
+				sky_color_final *= 1.-cloud_shading*vec3(1.1,1.2,1.3);
+			}
+
+
+			
+			
+			cloud.rgb *= clamp(light + sky_color_final*0.5 + sky_color *0.25, 0., 1.);
+
+
+            //blend sample into total
             clouds.rgb = mix(clouds.rgb, cloud.rgb, (1.-clouds.a) * cloud.a);
             clouds.a = clamp(clouds.a+(1.-clouds.a) * cloud.a,0.,1.);
         }
+
+		//horizon fog
         clouds.rgb = mix(clouds.rgb,sky_color,pow(1.-raydir.y,4.));
         
 
@@ -134,10 +217,18 @@ void main() {
 	//fake shading of cloud clumps
 	//clouds.rgb*=1.-clamp((clouds.a-0.5)*0.1,0.,0.25);
 
-	color.rgb = mix(color.rgb, clouds.rgb, min(clouds.a,1.) / max(1.,cloud_fog * CLOUD_FOG));
+	color.rgb = mix(color.rgb, clouds.rgb, min(clouds.a,1.));// / max(1.,cloud_fog * CLOUD_FOG));
+
+	
 	
 	
 	depth = depth == 1.0 ? 1.0 : 0.0;
+
+	#include "./reprojection.glsl"
+	
+
+	color = mix(color, ray_color.rgb,.9);
+	color.rgb = texcoord.x < 0.05 && texcoord.y < sunset_effect ? sun_color : color.rgb;
 	
 
 /* DRAWBUFFERS:1 */
