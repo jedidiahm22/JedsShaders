@@ -7,9 +7,11 @@ uniform sampler2D shadowtex0;
 uniform sampler2D shadowtex1;
 uniform sampler2D texture;
 uniform sampler2D normals;
+uniform sampler2D specular;
 uniform sampler2D depthtex0;
 
 uniform float sunAngle;
+uniform float shadowAngle;
 uniform vec3 shadowLightPosition;
 
 
@@ -43,9 +45,15 @@ varying vec2 jedlm;
 uniform mat4 gbufferModelViewInverse;
 uniform mat4 gbufferProjectionInverse;
 
+uniform int worldTime;
+
 
 uniform float wetness;
 uniform float frameTimeCounter;
+
+uniform int isEyeInWater;
+
+uniform int blockEntityId;
 
 
 //lighting
@@ -65,82 +73,12 @@ const float gamma = 0.5;
 #include "/distort.glsl"
 #include "/settings.glsl"
 
-float random3d(in vec3 p) 
-{
-	return fract(sin(p.x*456.+p.y*56.+p.z*741.)*100.);
-} 
-
-vec3 smooth_v3(in vec3 v)
-{
-	return v*v*(3.-2.*v);
-}
-
-float smooth_noise3d(in vec3 p) 
-{
-	vec3 f = smooth_v3(fract(p));
-
-	float a = random3d(floor(p));
-	float b = random3d(vec3(ceil(p.x),floor(p.y),floor(p.z)));
-	float c = random3d(vec3(floor(p.x), ceil(p.y),floor(p.z)));
-	float d = random3d(vec3(ceil(p.xy),floor(p.z)));
-
-	float bottom =  
-	mix(
-		mix(a, b, f.x),
-		mix(c, d, f.x),
-		f.y
-	);
-
-    a = random3d(vec3(floor(p.x),floor(p.y),ceil(p.z)));
-	b = random3d(vec3(ceil(p.x),floor(p.y),ceil(p.z)));
-	c = random3d(vec3(floor(p.x), ceil(p.y),ceil(p.z)));
-	d = random3d(vec3(ceil(p.xy), ceil(p.z)));
-
-    float top = 
-    mix(
-        mix(a,b,f.x),
-        mix(c,d,f.x),
-        f.y
-    );
-
-    return mix(bottom, top, f.z);
-
-}
-
-float fractal_noise3d(in vec3 p)
-{
-	float total = 0.25;
-	float amplitude = 1.;
-	float frequency = 1.;
-	float iterations = 4.;
-	for(float i = 0; i < iterations; i++)
-	{
-		total += (smooth_noise3d(p*frequency)-.5)*amplitude;
-		amplitude *= 0.5;
-		frequency *= 2.;
-	}
-	return total;
-}
-
-float get_cloud(in vec3 p)
-{
-	return clamp(
-		//noise for clouds
-		fractal_noise3d(p)
-		//Patches for clouds
-		*fractal_noise3d(p*0.1)*
-		(1.-(0.3*(1.-wetness)))*2.0
-	,0.,1.);
-}
-
-vec3 projectAndDivide(mat4 projectionMatrix, vec3 position) {
-	vec4 homogeneousPos = projectionMatrix * vec4(position, 1.0);
-	return homogeneousPos.xyz/homogeneousPos.w;
-}
-
 void main() {
 	vec4 color = texture2D(texture, texcoord) * glcolor;
 	vec2 lm = lmcoord;
+	vec4 lmap = texture2D(lightmap, jedlm);
+	vec4 specular_texture = texture2D(specular, texcoord);
+	float material_id = mc_entity.x;
 	#if LIGHTING_STYLE == 0
 		if (shadowPos.w > 0.0) {
 			//surface is facing towards shadowLightPosition
@@ -184,20 +122,102 @@ void main() {
         mat3 tbn_matrix = mat3(tangent_face.xyz, bitangent.xyz, normals_face.xyz);
 
         vec4 normals_texture = texture2D(normals, texcoord).rgba;
+
+		float texture_ao = normals_texture.b;
+
         normals_texture.xy = normals_texture.xy * 2. - 1.;
+
         normals_texture.z = sqrt(1.0-dot(normals_texture.xy, normals_texture.xy));
+
         normals_texture.xyz = normalize( tbn_matrix * normals_texture.xyz);
 
-		float lightDot = clamp(dot(normalize(shadowLightPosition), normals_texture.xyz),0.,1.);
-        
+		#if PBR == 1
+			//save albedo
+			vec3 albedo = color.rgb;
 
-		vec4 jedlmap = texture2D(lightmap, jedlm);
+			//decode pbr texture
+			float f0 = specular_texture.g;
+			bool metal = specular_texture.g >= 229.5;
+
+			
+
+			//red channel
+			float perceptualSmoothness = specular_texture.r;
+			float roughness = pow(1.0 - perceptualSmoothness, 2.0);
+			float smoothness = 1.-sqrt(roughness);
+			//blue channel
+			float porosity = specular_texture.b <64.5/255. ? specular_texture.b/64.:0.;
+			float sss = specular_texture.b >=64.5/255. ? (specular_texture.b-64.) / (255.-64.) : 0.;
+			//alpha channel
+			float emissive = specular_texture.a >= 255./255. ? 0. : specular_texture.a;
+
+			//ipbr
+			if(abs(material_id-10003.) < .5)
+			{
+				porosity = 1.;
+			}
+			if(abs(material_id-10002.) < .5)
+			{
+				sss = 1.;
+			}
+			if(abs(material_id-10006.) < .5)
+			{
+				smoothness = 1.;
+			}
+
+			//porosity effects
+			float actual_wetness = wetness*(lmcoord.y > .96?1.:0.);
+			float wet_shine = clamp(actual_wetness-.5*porosity,0.,1.);
+			f0+=(1.-f0)*wet_shine*.7;
+			smoothness+=(1.-smoothness)*wet_shine;
+			color.rgb*=1.-porosity*actual_wetness*.7;
+
+			vec3 ray_dir = normalize(viewPos_v3.xyz);
+
+			float fresnel = pow(clamp(1.+dot(normals_texture.xyz,ray_dir),0.,1.),6.) * FRESNEL;
+			float reflective_strength = f0+(1.0-f0)*fresnel*smoothness;
+		#else
+			float reflective_strength =0.;
+		#endif
+
+		vec3 sun_dir = normalize(shadowLightPosition);
+
 		
-        
-		float lighting_coefficient = lightDot * jedlm.y + jedlmap.x * jedlm.x + ambientLight;
-		//Lighting
-		color.rgb *= (sunAngle<.5) ? vec3(1.0, 0.9, 0.8) * lighting_coefficient : vec3(.5,.5,.7) * lighting_coefficient;
+		// DiffuseLighting
+		float lightDot = clamp(dot(sun_dir, normals_texture.xyz),0.,1.);
 
+		float timeOfDay = fract(worldTime/23999);
+
+		
+
+		float adjustment = smoothstep(0.0,1.0,timeOfDay);
+        
+		float lighting_coefficient = (lmap.y * jedlm.y * texture_ao + (lightDot * (1.-reflective_strength)*adjustment));
+		color.rgb *= lighting_coefficient;
+
+		#if PBR == 1
+			//specular
+			vec3 reflected_ray = reflect(ray_dir, normals_texture.xyz);
+			
+			float sun_reflection =
+			pow(clamp(dot(reflected_ray,sun_dir),0.,1.),1.+11.*smoothness);
+
+			//limit by face
+			sun_reflection*=clamp(dot(normals_face.xyz,sun_dir)*10.,0.,1.);
+
+			//to do: add shadow effect
+
+			//soften reflection on rough materials
+			sun_reflection*smoothness;
+
+			//add sun reflection
+			color.rgb+=reflective_strength*sun_reflection*(metal? albedo:vec3(1.));
+			color.a = color.a>=1./255. ? min(1.,color.a+reflective_strength*sun_reflection):color.a;
+
+			//emissive
+			color.rgb=clamp(color.rgb+albedo.rgb*emissive,0.,1.);
+
+		#endif
 
 		// Fog
 
@@ -225,6 +245,8 @@ void main() {
 			#endif
 			color.rgb = mix(color.rgb, fogColor, fog_amount);
 		#endif
+
+		//Debug Views
 
         #if DEBUG_VIEW == 1
             color.rgb = normals_face.xyz * 0.5 + 0.5;

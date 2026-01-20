@@ -9,7 +9,7 @@
 
 
 #define LIGHTING //Lighting Settings
-    #define LIGHTING_STYLE 0 // 0: Old Lighting. 1: JedLighting [0 1]
+    #define LIGHTING_STYLE 1 // 0: Old Lighting. 1: JedLighting [0 1]
     #define TORCH_COLOR_RED 1.0 //[0.00 0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
     #define TORCH_COLOR_GREEN 1.0 //[0.00 0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
     #define TORCH_COLOR_BLUE 0.0 //[0.0 0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
@@ -34,7 +34,7 @@
 #define COLORED_SHADOWS 1 //0: Stained glass will cast ordinary shadows. 1: Stained glass will cast colored shadows. 2: Stained glass will not cast any shadows. [0 1 2]
 #define SHADOW_BRIGHTNESS 0.75 //Light levels are multiplied by this number when the surface is in shadows [0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35 0.40 0.45 0.50 0.55 0.60 0.65 0.70 0.75 0.80 0.85 0.90 0.95 1.00]
 
-#define CLOUD_STYLE 0 //[0 1 2]
+#define CLOUD_STYLE 1 //[0 1 2]
 #define CLOUD_FOG 1.0 //[0.0 0.25 0.50 0.75 1.0]
 #define CLOUD_SPEED 0.10 //[0.10 0.25 0.50 0.75 1.0 1.20 1.25 1.5 1.75 2.0 2.25 2.5 3.0]
 #define CLOUD_PERMUTATION_SPEED 0.10 //[0.10 0.25 0.50 0.75 1.0 1.20 1.25 1.5 1.75 2.0 2.25 2.5 3.0]
@@ -44,3 +44,6 @@
 #define CLOUD_SAMPLES 20.0 //[10.0 15.0 20.0 25.0 30.0 35.0 40.0 45.0 50.0 60.0 70.0 80.0 90.0 100.0]
 #define CLOUD_SHADING_SAMPLES 5.0 //[5.0 6.0 7.0 8.0 9.0 10.0]
 #define CLOUD_HEIGHT 1 //[0 10 20 30 40 50 60 70 80 90 100 110 120 130 140 150 160 170 180 190 200]
+
+#define PBR 1 //[0 1]
+#define FRESNEL 1.0 //[0.0 0.25 0.5 0.75 1.0]
